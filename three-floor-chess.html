@@ -25,7 +25,22 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     --ink:#e6ecf3; --muted:#93a1b3; --accent:#5aa9ff; --accent2:#7ee0b8;
     --light:#c9d3df; --dark:#3a4658; --sel:#f2c14e; --move:#5aa9ff; --cap:#ff6b6b;
     --climb:#54d98c; --blunder:#ff5c5c; --gold:#f2c14e;
+    --sqL:#cdd6e0; --sqD:#5b6b81;  /* board squares — overridden by board themes */
   }
+  /* Board themes (set data-board on <html>) */
+  html[data-board="walnut"]{--sqL:#e8d3b0;--sqD:#9c6b43}
+  html[data-board="forest"]{--sqL:#d7e7c8;--sqD:#5b8a5a}
+  html[data-board="ocean"]{--sqL:#cfe4ef;--sqD:#4f7ea3}
+  html[data-board="mono"]{--sqL:#d8dde3;--sqD:#4a5361}
+  html[data-board="contrast"]{--sqL:#ffffff;--sqD:#2b3440}
+  /* High-contrast piece outlines + colorblind letter tags */
+  html[data-contrast="1"] .pc.w{color:#fff;text-shadow:0 0 2px #000,0 0 2px #000,0 1px 0 #000}
+  html[data-contrast="1"] .pc.b{color:#0b0e12;text-shadow:0 0 2px #fff,0 0 2px #fff}
+  .pclabel{position:absolute;bottom:0;right:1px;font-size:9px;font-weight:800;line-height:1;pointer-events:none;color:var(--ink);opacity:.8;text-shadow:0 0 2px var(--bg),0 0 2px var(--bg)}
+  html:not([data-labels="1"]) .pclabel{display:none}
+  .coordlabel{position:absolute;font-size:8px;font-weight:700;color:var(--muted);pointer-events:none;opacity:.75}
+  .coordlabel.file{bottom:0;right:2px} .coordlabel.rank{top:0;left:2px}
+  html:not([data-coords="1"]) .coordlabel{display:none}
   *{box-sizing:border-box}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
@@ -70,8 +85,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   .sq{position:relative;display:flex;align-items:center;justify-content:center;font-size:26px;
     cursor:pointer;user-select:none;min-width:0;min-height:0;overflow:hidden;line-height:1}
   .sq .pc,.ptile .g{line-height:1}
-  .sq.l{background:#cdd6e0}
-  .sq.d{background:#5b6b81}
+  .sq.l{background:var(--sqL)}
+  .sq.d{background:var(--sqD)}
   .sq .pc{line-height:1;filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))}
   .pc.w{color:#f7fafc;text-shadow:0 0 2px #000,0 0 1px #000, 0 1px 0 #7d8794}
   .pc.b{color:#161a20;text-shadow:0 0 1px #cfd8e3}
@@ -3013,6 +3028,278 @@ window.SUPABASE_CONFIG = {
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
 
+</script>
+
+<!-- ==================== EXTRAS · sound · themes · a11y · takeback · daily · history ==================== -->
+<style>
+#settingsModal .row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+#settingsModal .row:last-child{border-bottom:none}
+#settingsModal .lab{font-size:14px;color:var(--ink)} #settingsModal .sub{font-size:11px;color:var(--muted);margin-top:1px}
+.tsw{position:relative;width:44px;height:26px;flex:0 0 auto;border-radius:20px;background:var(--panel2);border:1px solid var(--line);cursor:pointer;transition:.15s}
+.tsw.on{background:var(--accent);border-color:var(--accent)}
+.tsw::after{content:'';position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.15s}
+.tsw.on::after{transform:translateX(18px)}
+.tsel{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 8px;font-size:13px}
+.statgrid{display:flex;gap:8px;margin-top:8px}
+.statbox{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 4px;text-align:center}
+.statbox b{display:block;font-size:20px;color:var(--ink)} .statbox span{font-size:11px;color:var(--muted)}
+.histrow{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:6px 2px;border-bottom:1px solid var(--line)}
+.histrow:last-child{border-bottom:none}
+.histres{font-weight:800;flex:0 0 auto} .histres.win{color:var(--accent2)} .histres.loss{color:var(--cap)} .histres.draw{color:var(--muted)}
+#undoBtn{margin-right:8px}
+.iconbtn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:20px;width:34px;height:34px;font-size:15px;cursor:pointer;padding:0}
+.iconbtn:hover{border-color:var(--accent)}
+</style>
+
+<div class="modal-bg" id="settingsModal">
+  <div class="modal" style="max-width:400px;width:92%;text-align:left;max-height:86vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <h2>Settings</h2><button class="btn ghost sm" id="setClose">✕</button></div>
+
+    <div class="ssec">Sound &amp; feel</div>
+    <div class="row"><div><div class="lab">Sound effects</div><div class="sub">Moves, captures, check, win</div></div><div class="tsw" id="swSound"></div></div>
+    <div class="row"><div><div class="lab">Vibration</div><div class="sub">Haptic feedback on phones</div></div><div class="tsw" id="swHaptics"></div></div>
+
+    <div class="ssec">Board</div>
+    <div class="row"><div class="lab">Board theme</div>
+      <select class="tsel" id="selBoard">
+        <option value="">Slate (default)</option><option value="walnut">Walnut</option>
+        <option value="forest">Forest</option><option value="ocean">Ocean</option>
+        <option value="mono">Mono</option><option value="contrast">High contrast</option>
+      </select></div>
+    <div class="row"><div><div class="lab">Coordinates</div><div class="sub">File/rank labels on the board</div></div><div class="tsw" id="swCoords"></div></div>
+
+    <div class="ssec">Accessibility</div>
+    <div class="row"><div><div class="lab">Piece letters</div><div class="sub">Colour-blind-friendly P/N/B/R/Q/K tags</div></div><div class="tsw" id="swLabels"></div></div>
+    <div class="row"><div><div class="lab">High-contrast pieces</div><div class="sub">Stronger outlines</div></div><div class="tsw" id="swContrast"></div></div>
+
+    <div class="ssec">Your record (this device)</div>
+    <div class="statgrid">
+      <div class="statbox"><b id="stW">0</b><span>Wins</span></div>
+      <div class="statbox"><b id="stL">0</b><span>Losses</span></div>
+      <div class="statbox"><b id="stD">0</b><span>Draws</span></div>
+    </div>
+    <div id="histList" style="margin-top:10px"></div>
+    <button class="btn ghost sm" id="histClear" style="margin-top:8px">Clear history</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  const el = id=>document.getElementById(id);
+  /* ---------- settings ---------- */
+  const SKEY='tfc.settings';
+  const DEF={sound:true,haptics:true,board:'',coords:false,labels:false,contrast:false};
+  let S_ = (()=>{ try{ return Object.assign({},DEF,JSON.parse(localStorage.getItem(SKEY)||'{}')); }catch(e){ return Object.assign({},DEF); } })();
+  function saveS(){ try{ localStorage.setItem(SKEY,JSON.stringify(S_)); }catch(e){} }
+  function applyS(){
+    const h=document.documentElement;
+    h.setAttribute('data-board',S_.board||'');
+    h.setAttribute('data-coords',S_.coords?'1':'0');
+    h.setAttribute('data-labels',S_.labels?'1':'0');
+    h.setAttribute('data-contrast',S_.contrast?'1':'0');
+  }
+  applyS();
+
+  /* ---------- sound engine (reuses the game's AudioContext) ---------- */
+  function tone(freq,dur,type,vol,slideTo,when){
+    if(!S_.sound) return;
+    const a=(typeof audioCtx==='function')?audioCtx():null; if(!a) return;
+    try{
+      const t0=a.currentTime+(when||0);
+      const o=a.createOscillator(), g=a.createGain();
+      o.type=type||'sine'; o.frequency.setValueAtTime(freq,t0);
+      if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,t0+dur);
+      g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(vol||0.1,t0+0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+      o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0+dur+0.02);
+    }catch(e){}
+  }
+  const FX={
+    move(){ tone(430,0.07,'sine',0.08); },
+    select(){ tone(680,0.04,'sine',0.045); },
+    climb(){ tone(400,0.06,'triangle',0.08); tone(600,0.07,'triangle',0.07,null,0.06); },
+    capture(){ tone(210,0.13,'square',0.13,120); tone(520,0.05,'sine',0.06); },
+    check(){ tone(880,0.16,'triangle',0.12); tone(880,0.16,'triangle',0.12,null,0.18); },
+    win(){ [523,659,784,1047].forEach((f,i)=>tone(f,0.16,'sine',0.11,null,i*0.12)); },
+    lose(){ [523,415,330,262].forEach((f,i)=>tone(f,0.2,'sine',0.1,null,i*0.13)); },
+  };
+  function buzz(p){ if(S_.haptics && navigator.vibrate){ try{ navigator.vibrate(p); }catch(e){} } }
+  window.TFCfx = FX; // for other modules
+
+  /* ---------- monkey-patch rendering for a11y labels ---------- */
+  const _paintPiece=paintPiece;
+  paintPiece=function(sq,p){ _paintPiece(sq,p); const l=document.createElement('span'); l.className='pclabel'; l.textContent=(p.type==='G'?'G':p.type); sq.appendChild(l); };
+  const _boardEl=boardEl;
+  boardEl=function(f){
+    const b=_boardEl(f);
+    const homeRank=(myColor==='b')?7:0, leftFile=(myColor==='b')?7:0;
+    b.querySelectorAll('.sq').forEach(sq=>{
+      const r=+sq.dataset.r,c=+sq.dataset.c;
+      if(r===homeRank){ const s=document.createElement('span'); s.className='coordlabel file'; s.textContent=String.fromCharCode(97+c); sq.appendChild(s); }
+      if(c===leftFile){ const s=document.createElement('span'); s.className='coordlabel rank'; s.textContent=(r+1); sq.appendChild(s); }
+    });
+    return b;
+  };
+
+  /* ---------- sound + haptic hooks ---------- */
+  const _applyLocal=applyLocal;
+  applyLocal=function(act){
+    if(act.kind==='climb') FX.climb(); else if(act.cap){ FX.capture(); buzz(18); } else FX.move();
+    const r=_applyLocal(act);
+    if(!S.over && king(S,oppOf()) && inCheck(S,oppOf())) FX.check();
+    return r;
+  };
+  const _applyRemoteAct=applyRemoteAct;
+  applyRemoteAct=function(m){
+    const before=S.captured.w.length+S.captured.b.length;
+    const r=_applyRemoteAct(m);
+    const after=S.captured.w.length+S.captured.b.length;
+    if(m.kind==='climb') FX.climb(); else if(after>before) FX.capture(); else FX.move();
+    if(!S.over && king(S,myColor) && inCheck(S,myColor)){ FX.check(); buzz([25,40,25]); }
+    return r;
+  };
+  const _aiPlayTurn=aiPlayTurn;
+  aiPlayTurn=function(st,color,diff,onEvent){
+    const before=st.captured?(st.captured.w.length+st.captured.b.length):0;
+    const r=_aiPlayTurn(st,color,diff,onEvent);
+    const after=st.captured?(st.captured.w.length+st.captured.b.length):0;
+    if(!puzzleMode){ if(after>before) FX.capture(); else FX.move(); }
+    if(!st.over && king(st,myColor) && inCheck(st,myColor)) setTimeout(()=>{ FX.check(); buzz([25,40,25]); },110);
+    return r;
+  };
+  const _onPlayClick=onPlayClick;
+  onPlayClick=function(f,r,c){
+    const hadSel=selected;
+    _onPlayClick(f,r,c);
+    if(selected!=null && selected!==hadSel) FX.select();
+  };
+
+  /* ---------- takeback / undo (single-player vs computer) ---------- */
+  let hist=[];
+  function sig(st){ return st.pieces.map(p=>p.color+p.type+p.floor+p.r+p.c).sort().join('|')+'#'+st.turn; }
+  function singlePlayerActive(){ return mode==='ai' && !netMode && !puzzleMode && phase==='play'; }
+  function snapshotFresh(){
+    if(!singlePlayerActive()) return;
+    if(S.over||S.mustPlace||placingHuman||S.turn!==myColor||S.actionsThisTurn!==0) return;
+    const s=sig(S);
+    if(hist.length && hist[hist.length-1]._sig===s) return;
+    const snap=clone(S); snap._sig=s; hist.push(snap); if(hist.length>60) hist.shift();
+  }
+  function canUndo(){ return singlePlayerActive() && !S.over && (S.actionsThisTurn>0 || hist.length>=2); }
+  function undoMove(){
+    if(!canUndo()) return;
+    if(S.actionsThisTurn>0){ window.__game.S=clone(hist[hist.length-1]); }
+    else { hist.pop(); window.__game.S=clone(hist[hist.length-1]); }
+    selected=null; legalCache=[]; placingHuman=false; awaitingRemote=false;
+    if(pendingAfterPlace!==undefined) pendingAfterPlace=null;
+    FX.select();
+    renderPlay();
+  }
+
+  /* ---------- match history ---------- */
+  const HKEY='tfc.history';
+  function loadHist(){ try{ return JSON.parse(localStorage.getItem(HKEY)||'[]'); }catch(e){ return []; } }
+  function saveHist(a){ try{ localStorage.setItem(HKEY,JSON.stringify(a)); }catch(e){} }
+  let histRecorded=false;
+  function recordHistory(o){
+    if(histRecorded||puzzleMode||!o) return; histRecorded=true;
+    const draw=['stalemate','draw','blockade'].includes(o.reason);
+    const res=draw?'draw':(o.winner===myColor?'win':'loss');
+    const entry={ ts:Date.now(), mode:netMode?'online':'ai', gt:gameType, res, reason:o.reason,
+      opp: netMode?'Online opponent':(typeof currentBot!=='undefined'&&currentBot?currentBot.name:'Computer'), side:myColor };
+    const a=loadHist(); a.unshift(entry); while(a.length>100) a.pop(); saveHist(a);
+  }
+  const GTNAME={open:'Three-Floor',shafts:'Shafts',classic:'Classic',pawnrace1:'Pawn Race',pawnrace2:'Pawn Race²'};
+  function renderStats(){
+    const a=loadHist();
+    const w=a.filter(x=>x.res==='win').length, l=a.filter(x=>x.res==='loss').length, d=a.filter(x=>x.res==='draw').length;
+    el('stW').textContent=w; el('stL').textContent=l; el('stD').textContent=d;
+    const host=el('histList'); host.innerHTML='';
+    if(!a.length){ host.innerHTML='<div class="dim" style="font-size:12px">No games yet — play one!</div>'; return; }
+    a.slice(0,12).forEach(x=>{
+      const row=document.createElement('div'); row.className='histrow';
+      const when=new Date(x.ts).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+      const label=x.res==='win'?'W':x.res==='loss'?'L':'D';
+      row.innerHTML=`<span class="histres ${x.res}">${label}</span><span style="flex:1;color:var(--muted)">${GTNAME[x.gt]||x.gt} · ${x.opp}</span><span class="dim">${when}</span>`;
+      host.appendChild(row);
+    });
+  }
+
+  /* ---------- daily puzzle ---------- */
+  function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+  function dailyIndex(){ const s=todayStr(); let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return h % PUZZLES.length; }
+  const DKEY='tfc.daily';
+  function dailyDone(){ try{ return localStorage.getItem(DKEY)===todayStr(); }catch(e){ return false; } }
+  function markDailyDone(){ try{ localStorage.setItem(DKEY,todayStr()); }catch(e){} refreshDailyBtn(); }
+  function startDaily(){ curDaily=true; loadPuzzle(dailyIndex()); refreshDailyBtn(); }
+  let curDaily=false;
+  function refreshDailyBtn(){ const b=el('dailyBtn'); if(b) b.innerHTML = dailyDone()?'Daily ✓':'Daily puzzle'; }
+
+  /* ---------- hooks into game lifecycle ---------- */
+  const _showOver=showOver;
+  showOver=function(){
+    const r=_showOver();
+    try{
+      const o=S.over||{};
+      const draw=['stalemate','draw','blockade'].includes(o.reason);
+      if(puzzleMode){ if(o.reason==='checkmate'){ FX.win(); if(curDaily){ markDailyDone(); curDaily=false; } } }
+      else { if(draw) FX.move(); else if(o.winner===myColor){ FX.win(); buzz([30,60,30]); } else FX.lose(); recordHistory(o); }
+    }catch(e){}
+    return r;
+  };
+  const _finishAiTurn=finishAiTurn;
+  finishAiTurn=function(){ const r=_finishAiTurn(); try{ if(!S.over && S.turn===myColor){ buzz(15); snapshotFresh(); } updateUndo(); }catch(e){} return r; };
+  const _renderPlay=renderPlay;
+  renderPlay=function(){ const r=_renderPlay(); try{ snapshotFresh(); updateUndo(); }catch(e){} return r; };
+  function resetFeatureState(){ hist=[]; histRecorded=false; curDaily=false; }
+  const _startGame=startGame;
+  startGame=function(){ resetFeatureState(); const r=_startGame(); return r; };
+  const _loadPuzzle=loadPuzzle;
+  loadPuzzle=function(i,silent){ histRecorded=false; return _loadPuzzle(i,silent); };
+  const _resetAll=resetAll;
+  resetAll=function(){ resetFeatureState(); const r=_resetAll(); refreshDailyBtn(); return r; };
+  const _startOnlineGame=(typeof startOnlineGame==='function')?startOnlineGame:null;
+  if(_startOnlineGame){ startOnlineGame=function(){ resetFeatureState(); return _startOnlineGame(); }; }
+
+  function updateUndo(){ const b=el('undoBtn'); if(b){ b.disabled=!canUndo(); b.style.display=(mode==='ai'&&!netMode&&!puzzleMode)?'':'none'; } }
+
+  /* ---------- inject buttons + wire settings ---------- */
+  function inject(){
+    // gear button in header
+    const acct=el('acctChip');
+    if(acct && !el('gearBtn')){
+      const g=document.createElement('button'); g.id='gearBtn'; g.className='iconbtn'; g.title='Settings'; g.textContent='⚙';
+      acct.parentNode.insertBefore(g, acct);
+      g.onclick=openSettings;
+    }
+    // daily puzzle button next to Puzzles
+    const pz=el('puzzleBtn');
+    if(pz && !el('dailyBtn')){
+      const d=document.createElement('button'); d.id='dailyBtn'; d.className='btn ghost'; d.style.cssText='padding:6px 12px;margin-left:8px';
+      d.textContent='Daily puzzle'; pz.parentNode.insertBefore(d, pz.nextSibling); d.onclick=startDaily;
+      refreshDailyBtn();
+    }
+    // undo button before end-turn
+    const et=el('endTurnBtn');
+    if(et && !el('undoBtn')){
+      const u=document.createElement('button'); u.id='undoBtn'; u.className='btn ghost'; u.textContent='↶ Undo';
+      et.parentNode.insertBefore(u, et); u.onclick=undoMove; u.disabled=true;
+    }
+    // settings modal wiring
+    el('setClose').onclick=()=>el('settingsModal').classList.remove('show');
+    const sw=(id,key)=>{ const e=el(id); if(!e) return; e.classList.toggle('on',!!S_[key]); e.onclick=()=>{ S_[key]=!S_[key]; e.classList.toggle('on',S_[key]); saveS(); applyS(); if(key==='sound'&&S_.sound) FX.select(); }; };
+    sw('swSound','sound'); sw('swHaptics','haptics'); sw('swCoords','coords'); sw('swLabels','labels'); sw('swContrast','contrast');
+    const sb=el('selBoard'); if(sb){ sb.value=S_.board||''; sb.onchange=()=>{ S_.board=sb.value; saveS(); applyS(); }; }
+    el('histClear').onclick=()=>{ if(confirm('Clear your local game history?')){ saveHist([]); renderStats(); } };
+  }
+  function openSettings(){ renderStats(); el('settingsModal').classList.add('show'); }
+
+  // expose a few for tests
+  window.__extras={ get hist(){return hist;}, undoMove, canUndo, dailyIndex, loadHist, saveHist, get settings(){return S_;}, applyS, FX, recordHistory:(o)=>recordHistory(o) };
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',inject); else inject();
+})();
 </script>
 
 </body>

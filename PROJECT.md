@@ -355,6 +355,19 @@ keep a single-file build target — offline-in-one-file is a core property.
 
 ## 18. Changelog
 
+- **2026-09-22 (player features)** — Big self-contained feature batch, appended as
+  an EXTRAS module (monkey-patches core fns; no engine edits): **sound effects**
+  (WebAudio, reuses `audioCtx()` — move/capture/climb/check/win/lose) + **haptics**
+  (`navigator.vibrate`); **board themes** (Slate/Walnut/Forest/Ocean/Mono/Contrast
+  via `html[data-board]` CSS vars; `.sq.l/.d` now use `--sqL/--sqD`); **accessibility**
+  (coordinate labels, colour-blind piece-letter tags, high-contrast pieces —
+  all `html[data-*]` toggles); **takeback/undo** (single-player only, clone-snapshot
+  stack restored via `__game.S`); **daily puzzle** (date-hashed index into PUZZLES,
+  solved-state in localStorage); **match history + record** (localStorage, W/L/D +
+  last games). All wired through a **Settings modal** (gear button) + Daily/Undo
+  buttons. Test hooks on `window.__extras`. Verified headlessly: undo round-trip,
+  history record + dedup, label/coord DOM + CSS gating, theme apply, daily
+  determinism, settings toggles, engine regression.
 - **2026-08-12 (clock + privacy)** — Per-turn clock for online games: host picks
   Off/30s/60s/2m in the online panel (setting rides the `{t:'deploy'}` message);
   countdown pill beside the turn indicator; the player to move self-flags on expiry
