@@ -304,9 +304,11 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
               </div>
             </div>
             <div class="hint" style="margin-bottom:8px;font-size:11px">The host’s timer setting applies to both players.</div>
-            <div id="onlineMenu" style="display:flex;gap:8px">
+            <button class="btn primary" id="quickBtn" style="width:100%;margin-bottom:8px">⚡ Quick match — play anyone</button>
+            <div id="onlineMenu" style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn ghost" id="hostBtn" style="flex:1">Host game</button>
               <button class="btn ghost" id="joinBtn" style="flex:1">Join game</button>
+              <button class="btn ghost" id="watchBtn" style="flex:1 0 100%">Watch a game</button>
             </div>
             <div id="joinInput" class="hidden" style="margin-top:8px">
               <input id="codeInput" placeholder="ROOM CODE" maxlength="9"
@@ -1269,6 +1271,7 @@ let mode='ai';             // 'ai' | 'online'
 let myColor='w';           // 'w' single-player/host, 'b' online guest
 let sideChoice='w';        // vs-computer side pick: 'w' | 'b' | 'rand'
 let netMode=false, net=null, awaitingRemote=false, iAmHost=false, iSentDeploy=false, oppDeploy=null, roomCode=null;
+let spectator=false, spectators=[], specPeer=null;   // spectator mode + host-side watcher list
 let puzzleMode=false, curPuzzle=0, puzRemaining=0, puzMoveNo=0, puzBusy=false;
 const oppOf=()=>other(myColor);
 
@@ -1667,6 +1670,7 @@ function updateStatus(){
 /* ----- Play interaction ----- */
 function onPlayClick(f,r,c){
   if(phase!=='play'||S.over) return;
+  if(spectator) return;                       // watchers are read-only
   if(netMode&&netLost) return;               // frozen while the opponent reconnects
   if(puzzleMode && puzBusy) return;
   if(placingHuman){ tryPlaceHuman(f,r,c); return; }
@@ -2095,6 +2099,10 @@ function resetAll(){
   if(netMode && net){ try{ net.send({t:'resign'}); }catch(e){} try{ net.peer&&net.peer.destroy(); }catch(e){} }
   clearNetTimers(); netLost=false; hideBanner(); chatShow(false);
   stopTurnClock(); clockSetting=0;
+  try{ qmCleanup&&qmCleanup(); }catch(e){} qmActive=false;
+  try{ specPeer&&specPeer.destroy(); }catch(e){} specPeer=null;
+  for(const c of spectators){ try{c.close();}catch(e){} } spectators=[];
+  spectator=false; el('chatRow')&&(el('chatRow').style.display='');
   rematchMine=false; rematchTheirs=false; el('rematchMsg').classList.add('hidden');
   S=newState(); uid=1; phase='setup'; selected=null; legalCache=[]; selPaletteType=null; placingHuman=false; pendingAfterPlace=null;
   netMode=false; net=null; awaitingRemote=false; iAmHost=false; iSentDeploy=false; oppDeploy=null; roomCode=null; myColor='w';
@@ -2422,7 +2430,7 @@ function joinGame(code){
   peer.on('error',e=>netStatus('Could not connect: '+(e&&e.type||e)+' — check the code.'));
 }
 function bindConn(conn){
-  net={peer:(conn.provider||(net&&net.peer)), conn, send:(m)=>{ try{conn.send(m);}catch(e){} }};
+  net={peer:(conn.provider||(net&&net.peer)), conn, send:(m)=>{ try{conn.send(m);}catch(e){} bcastSpec(m); }};
   conn.on('open',()=>{
     netMode=true;
     if(netLost || phase==='play'){ handleReconnected(); } else { onConnected(); }
@@ -2460,9 +2468,12 @@ function startOnlineGame(){
   renderOppBot();
   renderPlay();
   if(view3D){ enter3D(); } else { applyLayout(); syncLayoutToggles(layout); }
+  if(iAmHost) startSpectatorListener();
 }
 function onNetMsg(m){
   if(!m||!m.t) return;
+  if(spectator){ return onSpecMsg(m); }   // spectators use a read-only handler
+  bcastSpec(m);                            // host: forward the opponent's messages to watchers
   if(m.t==='deploy'){ oppDeploy=m.pieces; if(!iAmHost && m.gameType) gameType=m.gameType; if(!iAmHost && m.clock!=null) clockSetting=m.clock; if(iSentDeploy) startOnlineGame(); else netStatus('Opponent is ready — deploy your army and hit Ready.'); }
   else if(m.t==='act'){ applyRemoteAct(m); }
   else if(m.t==='place'){ applyRemotePlace(m); }
@@ -2578,16 +2589,18 @@ function applyRemoteAct(m){
   let act=cands.find(a=>a.kind===m.kind && a.to.f===m.to.f && a.to.r===m.to.r && a.to.c===m.to.c);
   if(!act && m.kind==='climb'){ act={kind:'climb',pid:p.id,f:p.floor,to:{f:m.to.f,r:m.to.r,c:m.to.c},blunder:!!at(S,m.to.f,m.to.r,m.to.c)}; }
   if(!act) return;
-  if(m.promoType){ act._rawTo={f:m.to.f,r:m.to.r,c:m.to.c}; act.promoType=m.promoType; act.promoFloor=(m.promoFloor!=null?m.promoFloor:m.to.f); resolvePromo(act,oppOf()); }
-  doAction(S,act,oppOf(),null);
-  if(S.mustPlace===myColor){ beginHumanPlace(); }
+  // actor = whoever is to move (= the opponent in 1v1; correct for spectators watching both sides)
+  const actor=S.turn;
+  if(m.promoType){ act._rawTo={f:m.to.f,r:m.to.r,c:m.to.c}; act.promoType=m.promoType; act.promoFloor=(m.promoFloor!=null?m.promoFloor:m.to.f); resolvePromo(act,actor); }
+  doAction(S,act,actor,null);
+  if(!spectator && S.mustPlace===myColor){ beginHumanPlace(); }
   renderPlay();
 }
 function applyRemotePlace(m){
-  const oc=oppOf();
+  const oc=S.mustPlace||oppOf();   // the side whose general fell (opponent in 1v1)
   S.pieces.push(mk('K',oc,m.f,m.r,m.c)); S.kingOut[oc]=true; S.mustPlace=null; awaitingRemote=false;
   renderPlay();
-  if(S.turn===myColor && S.floorsActed.every(x=>x)) setTimeout(()=>humanEndTurn(),200);
+  if(!spectator && S.turn===myColor && S.floorsActed.every(x=>x)) setTimeout(()=>humanEndTurn(),200);
 }
 function applyRemoteEnd(){
   awaitingRemote=false; endTurn(S); renderPlay();
@@ -2621,8 +2634,112 @@ function onDisconnect(){
   }
   else if(phase!=='play'){ netStatus('Disconnected — try again.'); netMode=false; }
 }
+/* ═══════ QUICK MATCH (matchmaking over the PeerJS broker; no game server) ═══════
+   No lobby server: the first searcher claims a well-known peer id and waits; the
+   next searcher connects to it, they swap a fresh room code, then fall into the
+   normal host/join flow. Contention (two claimers) resolves via unavailable-id. */
+const QM_LOBBY='TFC-QMLOBBY-1';
+let qmPeer=null, qmActive=false;
+function qmCleanup(){ try{ qmPeer&&qmPeer.destroy(); }catch(e){} qmPeer=null; }
+function quickMatch(){
+  if(qmActive) return;
+  qmActive=true; iAmHost=false;
+  el('onlineMenu').classList.add('hidden'); el('joinInput').classList.add('hidden'); el('hostInfo').classList.add('hidden');
+  netStatus('⚡ Finding an opponent…');
+  qmTryJoin();
+}
+function qmTryJoin(){
+  let peer; try{ peer=new Peer({config:{iceServers:ICE}}); }catch(e){ netStatus('No connection.'); qmActive=false; return; }
+  qmPeer=peer; let settled=false;
+  peer.on('open',()=>{
+    const c=peer.connect(QM_LOBBY,{reliable:true});
+    if(!c){ qmCleanup(); becomeLobby(); return; }
+    c.on('open',()=>netStatus('⚡ Opponent found — connecting…'));
+    c.on('data',(m)=>{ if(m&&m.t==='qm-room'&&!settled){ settled=true; qmCleanup(); joinGame(m.code); } });
+    setTimeout(()=>{ if(!settled){ try{c.close();}catch(e){} qmCleanup(); becomeLobby(); } },6000);
+  });
+  peer.on('error',(e)=>{ if(settled) return;
+    if(e&&e.type==='peer-unavailable'){ qmCleanup(); becomeLobby(); }
+    else { netStatus('Matchmaking unavailable — try Host / Join.'); qmActive=false; }
+  });
+}
+function becomeLobby(){
+  if(!qmActive) return;
+  let peer; try{ peer=new Peer(QM_LOBBY,{config:{iceServers:ICE}}); }catch(e){ netStatus('No connection.'); qmActive=false; return; }
+  qmPeer=peer; let paired=false;
+  netStatus('⚡ Waiting for an opponent…');
+  peer.on('connection',(c)=>{ c.on('open',()=>{
+    if(paired){ try{c.close();}catch(e){} return; }
+    paired=true;
+    const code=makeCode();
+    try{ c.send({t:'qm-room',code}); }catch(e){}
+    setTimeout(()=>{ try{c.close();}catch(e){} qmCleanup(); },1000);
+    iAmHost=true; myColor='w'; roomCode=code; qmActive=false;
+    netStatus('⚡ Opponent found — deploy your army!'); startHostPeer();
+  }); });
+  peer.on('error',(e)=>{ if(e&&e.type==='unavailable-id'){ qmCleanup(); qmTryJoin(); }
+    else { netStatus('Matchmaking unavailable — try Host / Join.'); qmActive=false; } });
+}
+
+/* ═══════ SPECTATOR MODE ═══════
+   The host opens a second peer id (room + "-S") for watchers. Watchers get a full
+   state sync on join, then the live act/place/end/chat stream (both players' moves),
+   rendered read-only. */
+function startSpectatorListener(){
+  if(specPeer) return;
+  let peer; try{ peer=new Peer('TFC-'+roomCode+'-S',{config:{iceServers:ICE}}); }catch(e){ return; }
+  specPeer=peer;
+  peer.on('connection',(c)=>{ c.on('open',()=>{
+    spectators.push(c);
+    try{ c.send({t:'spec-init', s:S, gt:gameType, clock:clockSetting}); }catch(e){}
+    c.on('close',()=>{ spectators=spectators.filter(x=>x!==c); });
+    c.on('error',()=>{ spectators=spectators.filter(x=>x!==c); });
+  }); });
+  peer.on('error',()=>{});
+}
+function bcastSpec(m){
+  if(!iAmHost || !spectators.length || !m || !m.t) return;
+  if(['act','place','end','resign','flag','chat'].indexOf(m.t)<0) return;
+  for(const c of spectators){ try{ c.send(m); }catch(e){} }
+}
+function watchGame(code){
+  code=(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(code.length<4){ netStatus('Enter the room code of the game to watch.'); return; }
+  spectator=true; iAmHost=false; myColor='w'; roomCode=code; netStatus('Connecting to game…');
+  let peer; try{ peer=new Peer({config:{iceServers:ICE}}); }catch(e){ netStatus('Could not connect.'); spectator=false; return; }
+  net={peer,send:()=>{}};
+  peer.on('open',()=>{ const c=peer.connect('TFC-'+code+'-S',{reliable:true});
+    if(!c){ netStatus('Could not reach that game.'); return; }
+    c.on('open',()=>{ netMode=true; try{c.send({t:'spectate'});}catch(e){} });
+    c.on('data',onSpecMsg); c.on('error',()=>netStatus('Watch connection error.'));
+    c.on('close',()=>{ if(phase==='play'&&!S.over){ netStatus('The game host went offline.'); } });
+    net={peer, conn:c, send:()=>{}};
+  });
+  peer.on('error',(e)=>netStatus('Could not watch: '+(e&&e.type||e)+' — is anyone hosting that code?'));
+}
+function specEnterPlay(){
+  woolgarVanish(); chatShow(true);
+  el('setupView').classList.add('hidden'); el('playView').classList.remove('hidden');
+  el('viewToggle').parentElement.classList.remove('hidden'); el('howCard').classList.remove('hidden');
+  el('endTurnBtn').style.display='none';
+  showBanner('👁 Spectating — read-only'); setTimeout(hideBanner,2500);
+  el('chatRow')&&(el('chatRow').style.display='none');   // watchers read chat but don't send
+  phase='play'; renderPlay(); applyLayout(); syncLayoutToggles(layout);
+}
+function onSpecMsg(m){
+  if(!m||!m.t) return;
+  if(m.t==='spec-init'){ S=m.s; if(m.gt) gameType=m.gt; specEnterPlay(); return; }
+  if(m.t==='act'){ applyRemoteAct(m); }
+  else if(m.t==='place'){ applyRemotePlace(m); }
+  else if(m.t==='end'){ endTurn(S); renderPlay(); if(S.over) showOver(); }
+  else if(m.t==='resign'||m.t==='flag'){ if(!S.over){ S.over={winner:null,reason:m.t==='flag'?'timeout':'resign'}; renderPlay(); showOver(); } }
+  else if(m.t==='chat'){ chatAdd(false,m.x); }
+}
+
 el('modeToggle').querySelectorAll('.segbtn').forEach(b=>{ b.onclick=()=>setMode(b.dataset.m); });
 el('overRematch').onclick=offerRematch;
+el('quickBtn')&&(el('quickBtn').onclick=quickMatch);
+el('watchBtn')&&(el('watchBtn').onclick=()=>{ const code=prompt('Enter the room code of the game to watch:'); if(code) watchGame(code); });
 el('chatSend').onclick=chatSendNow;
 el('chatIn').addEventListener('keydown',e=>{ if(e.key==='Enter') chatSendNow(); });
 el('chatHead').onclick=()=>{ const box=el('chatBox'); box.classList.toggle('min'); if(!box.classList.contains('min')){ chatUnseen=0; el('chatUnread').classList.add('hidden'); el('chatLog').scrollTop=el('chatLog').scrollHeight; } };

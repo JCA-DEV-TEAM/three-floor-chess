@@ -355,6 +355,16 @@ keep a single-file build target — offline-in-one-file is a core property.
 
 ## 18. Changelog
 
+- **2026-09-22 (online v3)** — **Quick match** (matchmaking with no game server: first
+  searcher claims well-known peer id `TFC-QMLOBBY-1` and waits; next searcher connects,
+  they swap a room code and fall into the normal host/join flow; contention resolves via
+  `unavailable-id`). **Spectator mode**: host opens a second peer id `TFC-<code>-S`,
+  watchers get a full `spec-init` state sync then the live act/place/end/chat stream,
+  rendered read-only (input + chat send blocked). Enabled by generalising
+  `applyRemoteAct`/`applyRemotePlace` to use `S.turn`/`S.mustPlace` as the actor
+  (proven equivalent to the old `oppOf()` for 1v1). **Live multi-device test still
+  pending** for both (PeerJS broker handshake) — logic verified headlessly: 1v1
+  regression, spectator sync/apply/read-only guard, neutral spectator end.
 - **2026-09-22 (player features)** — Big self-contained feature batch, appended as
   an EXTRAS module (monkey-patches core fns; no engine edits): **sound effects**
   (WebAudio, reuses `audioCtx()` — move/capture/climb/check/win/lose) + **haptics**
